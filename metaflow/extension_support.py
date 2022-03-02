@@ -78,16 +78,19 @@ def dump_module_info():
 def package_mfext_package(package_name):
     from metaflow.util import to_unicode
 
+    _ext_debug("Packaging '%s'" % package_name)
     _filter_files_package(package_name)
     pkg_info = _all_packages.get(package_name, None)
     if pkg_info and pkg_info.get("root_paths", None):
+        single_path = len(pkg_info["root_paths"]) == 1
         for p in pkg_info["root_paths"]:
             root_path = to_unicode(p)
             for f in pkg_info["files"]:
                 f_unicode = to_unicode(f)
                 fp = os.path.join(root_path, f_unicode)
-                if os.path.isfile(fp):
-                    yield fp, f_unicode
+                if single_path or os.path.isfile(fp):
+                    _ext_debug("\tAdding '%s'" % fp)
+                    yield fp, os.path.join(EXT_PKG, f_unicode)
 
 
 def package_mfext_all():
@@ -218,6 +221,7 @@ _extension_points = [
 def _ext_debug(*args, **kwargs):
     if METAFLOW_DEBUG_EXT_MECHANISM:
         init_str = "%s:" % EXT_PKG
+        kwargs["file"] = sys.stderr
         print(init_str, *args, **kwargs)
 
 
@@ -331,7 +335,7 @@ def _get_extension_packages():
                     if not any(
                         parts[-1].endswith(suffix) for suffix in EXT_EXCLUDE_SUFFIXES
                     ):
-                        files_to_include.append(f.as_posix())
+                        files_to_include.append(os.path.join(*parts[1:]))
 
                     if parts[1] in init_ext_points:
                         # This is most likely a problem as we need an intermediate
@@ -516,8 +520,8 @@ def _get_extension_packages():
             for root, dirs, files in os.walk(package_path):
                 parts = root.split("/")
                 cur_depth = len(parts)
-                # relative_root is metaflow_extensions/...
-                relative_root = "/".join(parts[base_depth - 1 :])
+                # relative_root strips out metaflow_extensions
+                relative_root = "/".join(parts[base_depth:])
                 relative_module = ".".join(parts[base_depth - 1 :])
                 files_to_include.extend(
                     [
@@ -589,6 +593,7 @@ def _get_extension_packages():
                                     "\tSkipping '%s' as no files/directory of interest"
                                     % _extension_points[idx]
                                 )
+                                continue
 
                             # Check for any "init" files
                             init_files = [
@@ -741,11 +746,14 @@ def _get_extension_config(distribution_name, tl_pkg, extension_point, config_mod
             if file_path:
                 # Common case where this is an actual init file (mfextinit_X.py or __init__.py)
                 root_paths = [
-                    "/".join(file_path.split("/")[: -len(module_name.split("."))])
+                    "/".join(file_path.split("/")[: -len(module_name.split(".")) + 1])
                 ]
             else:
                 # Only used for plugins.cards where the package can be a NS package
-                root_paths = list(extension_module.__path__)
+                root_paths = [
+                    "/".join(p.split("/")[: -len(module_name.split(".")) + 1])
+                    for p in extension_module.__path__
+                ]
 
             _ext_debug(
                 "Package '%s' is rooted at '%s'" % (distribution_name, root_paths)
